@@ -10,9 +10,11 @@ import os
 from datetime import datetime, timedelta
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-
-import rdi_recover
+try:
+    import rdi_recover
+except ImportError:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+    import rdi_recover
 
 
 def build_pd0_like_ensemble(
@@ -74,10 +76,10 @@ def write_file(path: Path, chunks: list[bytes]) -> None:
 class RdiRecoverTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = Path(tempfile.mkdtemp(prefix="rdi-recover-test-"))
-        self.subprocess_env = os.environ.copy()
+        self.uninstalled_subprocess_env = os.environ.copy()
         src_path = str(Path(__file__).resolve().parents[1] / "src")
-        existing = self.subprocess_env.get("PYTHONPATH")
-        self.subprocess_env["PYTHONPATH"] = src_path if not existing else os.pathsep.join([src_path, existing])
+        existing = self.uninstalled_subprocess_env.get("PYTHONPATH")
+        self.uninstalled_subprocess_env["PYTHONPATH"] = src_path if not existing else os.pathsep.join([src_path, existing])
 
     def tearDown(self) -> None:
         shutil.rmtree(self.temp_dir)
@@ -263,7 +265,7 @@ class RdiRecoverTests(unittest.TestCase):
             capture_output=True,
             text=True,
             check=False,
-            env=self.subprocess_env,
+            env=self.uninstalled_subprocess_env,
         )
         self.assertEqual(result.returncode, 0)
         self.assertIn("Chronological order", result.stdout)
@@ -276,7 +278,7 @@ class RdiRecoverTests(unittest.TestCase):
             capture_output=True,
             text=True,
             check=False,
-            env=self.subprocess_env,
+            env=self.uninstalled_subprocess_env,
         )
         self.assertEqual(result.returncode, 0)
         self.assertIn("rdi-recover 1.0.0", result.stdout)

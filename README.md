@@ -156,3 +156,32 @@ Run the test suite with:
 ```bash
 python -m unittest discover -s tests -p 'test_*.py'
 ```
+
+## Platform Validation
+
+- Supported target operating systems: Windows, macOS, Linux
+- Supported Python versions: Python 3.10+
+- Locally validated in disposable Docker containers:
+  - Linux ARM64 with `python:3.13-slim`
+  - Linux AMD64 under local Docker emulation with `python:3.13-slim`
+- GitHub Actions workflows are included to validate on GitHub-hosted runners for:
+  - Linux x64, pending CI execution
+  - Linux ARM64, pending CI execution
+  - Windows x64, pending CI execution
+  - macOS ARM64, pending CI execution
+  - macOS Intel/x64, pending CI execution
+
+Current validation status:
+
+- Already validated locally: Linux ARM64, Linux AMD64 under local Docker emulation, Python 3.13
+- Pending GitHub Actions execution: Windows x64, macOS ARM64, macOS Intel/x64, GitHub-hosted Linux variants, Python 3.10
+
+Local Docker validation examples:
+
+```bash
+docker run --rm --platform linux/arm64 -v "$PWD:/app" -w /app python:3.13-slim sh -lc 'uname -m && python --version && python -m pip install . && rdi-recover --version && rdi-recover --help >/dev/null && python -m unittest discover -s tests -p "test_*.py"'
+
+docker run --rm --platform linux/amd64 -v "$PWD:/app" -w /app python:3.13-slim sh -lc 'uname -m && python --version && python -m pip install . && rdi-recover --version && rdi-recover --help >/dev/null && python -m unittest discover -s tests -p "test_*.py"'
+```
+
+Windows and macOS validation are performed using GitHub-hosted runners through the repository workflows.

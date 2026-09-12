@@ -1,0 +1,54 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install build frontend
+        run: python -m pip install build
+
+      - name: Run synthetic tests
+        run: python -m unittest discover -s tests -p 'test_*.py'
+
+      - name: Build wheel and sdist
+        run: |
+          python -c "from pathlib import Path; import shutil; [shutil.rmtree(path) for path in (Path('build'), Path('dist')) if path.exists()]"
+          python -m build
+
+      - name: Verify artifacts exist
+        run: python -c "from pathlib import Path; wheels = list(Path('dist').glob('*.whl')); sdists = list(Path('dist').glob('*.tar.gz')); assert wheels, 'Missing wheel artifact'; assert sdists, 'Missing sdist artifact'"
+
+      - name: Install built wheel
+        run: python -c "from pathlib import Path; import subprocess, sys; wheel = sorted(Path('dist').glob('*.whl')); assert wheel, 'Missing wheel artifact'; subprocess.run([sys.executable, '-m', 'pip', 'install', str(wheel[0])], check=True)"
+
+      - name: Smoke test CLI
+        run: |
+          rdi-recover --version
+          python -m rdi_recover --version
+          python -c "import subprocess, sys; cmd = ['rdi-recover', '--help']; result = subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL); sys.exit(result.returncode)"
+
+      - name: Create or update GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          files: |
+            dist/*.whl
+            dist/*.tar.gz
