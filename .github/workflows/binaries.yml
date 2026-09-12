@@ -69,13 +69,16 @@ jobs:
           python -m PyInstaller --onefile --clean --noconfirm --paths src --specpath build/pyinstaller-spec --name rdi-recover scripts/rdi_recover_entry.py
 
       - name: Verify binary exists
-        run: python -c "from pathlib import Path; path = Path(r'${{ matrix.binary_path }}'); assert path.exists(), f'Missing binary: {path}'; print(path); print(path.stat().st_size)"
+        run: |
+          python -c "from pathlib import Path; path = Path(r'${{ matrix.binary_path }}'); assert path.exists(), f'Missing binary: {path}'; print(path); print(path.stat().st_size)"
 
       - name: Validate standalone binary
-        run: python scripts/validate_standalone_binary.py "${{ matrix.binary_path }}"
+        run: |
+          python scripts/validate_standalone_binary.py "${{ matrix.binary_path }}"
 
       - name: Package standalone artifact
-        run: python scripts/package_standalone_binary.py --binary "${{ matrix.binary_path }}" --archive "release-artifacts/${{ matrix.archive_name }}" --metadata-json "release-artifacts/${{ matrix.artifact_name }}.json"
+        run: |
+          python scripts/package_standalone_binary.py --binary "${{ matrix.binary_path }}" --archive "release-artifacts/${{ matrix.archive_name }}" --metadata-json "release-artifacts/${{ matrix.artifact_name }}.json"
 
       - name: Upload standalone artifact
         uses: actions/upload-artifact@v4
