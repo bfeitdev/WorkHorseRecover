@@ -281,7 +281,7 @@ class RdiRecoverTests(unittest.TestCase):
             env=self.uninstalled_subprocess_env,
         )
         self.assertEqual(result.returncode, 0)
-        self.assertIn("rdi-recover 1.0.1", result.stdout)
+        self.assertIn("rdi-recover 1.0.2", result.stdout)
 
     def test_non_recursive_directory_discovery_does_not_enter_subdirectories(self) -> None:
         top = self.temp_dir / "top"
