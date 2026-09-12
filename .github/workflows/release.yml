@@ -5,11 +5,10 @@ on:
     tags:
       - 'v*'
 
-permissions:
-  contents: write
-
 jobs:
-  release:
+  source-dist:
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -46,9 +45,112 @@ jobs:
           python -m rdi_recover --version
           python -c "import subprocess, sys; cmd = ['rdi-recover', '--help']; result = subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL); sys.exit(result.returncode)"
 
+      - name: Upload Python distribution artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-dist
+          path: dist/*
+
+  standalone-binaries:
+    permissions:
+      contents: read
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: windows-x64
+            runner: windows-latest
+            archive_name: rdi-recover-windows-x64.zip
+            artifact_name: rdi-recover-windows-x64
+            binary_path: dist/rdi-recover.exe
+          - label: linux-x64
+            runner: ubuntu-latest
+            archive_name: rdi-recover-linux-x64.tar.gz
+            artifact_name: rdi-recover-linux-x64
+            binary_path: dist/rdi-recover
+          - label: linux-arm64
+            runner: ubuntu-24.04-arm
+            archive_name: rdi-recover-linux-arm64.tar.gz
+            artifact_name: rdi-recover-linux-arm64
+            binary_path: dist/rdi-recover
+          - label: macos-arm64
+            runner: macos-15
+            archive_name: rdi-recover-macos-arm64.tar.gz
+            artifact_name: rdi-recover-macos-arm64
+            binary_path: dist/rdi-recover
+          - label: macos-x64
+            runner: macos-15-intel
+            archive_name: rdi-recover-macos-x64.tar.gz
+            artifact_name: rdi-recover-macos-x64
+            binary_path: dist/rdi-recover
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Platform diagnostics
+        run: |
+          python --version
+          python -c "import platform, sys; print(platform.platform()); print(platform.machine()); print(platform.architecture()); print(sys.version)"
+
+      - name: Install package and PyInstaller
+        run: |
+          python -m pip install .
+          python -m pip install pyinstaller
+
+      - name: Print PyInstaller version
+        run: python -m PyInstaller --version
+
+      - name: Build standalone binary
+        run: |
+          python -c "from pathlib import Path; import shutil; [shutil.rmtree(path) for path in (Path('build'), Path('dist'), Path('release-artifacts')) if path.exists()]"
+          python -m PyInstaller --onefile --clean --noconfirm --paths src --specpath build/pyinstaller-spec --name rdi-recover scripts/rdi_recover_entry.py
+
+      - name: Verify binary exists
+        run: python -c "from pathlib import Path; path = Path(r'${{ matrix.binary_path }}'); assert path.exists(), f'Missing binary: {path}'; print(path); print(path.stat().st_size)"
+
+      - name: Validate standalone binary
+        run: python scripts/validate_standalone_binary.py "${{ matrix.binary_path }}"
+
+      - name: Package standalone artifact
+        run: python scripts/package_standalone_binary.py --binary "${{ matrix.binary_path }}" --archive "release-artifacts/${{ matrix.archive_name }}" --metadata-json "release-artifacts/${{ matrix.artifact_name }}.json"
+
+      - name: Upload standalone artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: |
+            release-artifacts/${{ matrix.archive_name }}
+            release-artifacts/${{ matrix.artifact_name }}.json
+
+  release:
+    permissions:
+      contents: write
+    needs: [source-dist, standalone-binaries]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+
+      - name: Verify expected release assets exist
+        run: |
+          python -c "from pathlib import Path; expected = {'whl': 1, 'sdist': 1, 'rdi-recover-windows-x64.zip': 1, 'rdi-recover-linux-x64.tar.gz': 1, 'rdi-recover-linux-arm64.tar.gz': 1, 'rdi-recover-macos-arm64.tar.gz': 1, 'rdi-recover-macos-x64.tar.gz': 1}; root = Path('release-assets'); wheels = list(root.glob('**/*.whl')); sdists = list(root.glob('**/*.tar.gz')); named = [path.name for path in root.glob('**/*') if path.is_file()]; problems = []; problems.extend([] if len(wheels) == expected['whl'] else [f'expected {expected[\'whl\']} wheel, found {len(wheels)}']); problems.extend([] if len([p for p in sdists if p.name.endswith('.tar.gz') and p.name.startswith('rdi_recover-')]) == expected['sdist'] else [f'expected {expected[\'sdist\']} python sdist, found {len([p for p in sdists if p.name.endswith(\'.tar.gz\') and p.name.startswith(\'rdi_recover-\')])}']); archive_names = {'rdi-recover-windows-x64.zip', 'rdi-recover-linux-x64.tar.gz', 'rdi-recover-linux-arm64.tar.gz', 'rdi-recover-macos-arm64.tar.gz', 'rdi-recover-macos-x64.tar.gz'}; missing = sorted(name for name in archive_names if name not in named); problems.extend([f'missing standalone archive: {name}' for name in missing]); extras = sorted(name for name in named if name.endswith(('.zip', '.tar.gz', '.whl')) and name not in archive_names and not name.startswith('rdi_recover-')); problems.extend([f'unexpected release asset: {name}' for name in extras]); assert not problems, '; '.join(problems)"
+
       - name: Create or update GitHub Release
         uses: softprops/action-gh-release@v3
         with:
+          fail_on_unmatched_files: true
           files: |
-            dist/*.whl
-            dist/*.tar.gz
+            release-assets/**/*.whl
+            release-assets/**/*.tar.gz
+            release-assets/**/*.zip

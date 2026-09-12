@@ -161,20 +161,16 @@ python -m unittest discover -s tests -p 'test_*.py'
 
 - Supported target operating systems: Windows, macOS, Linux
 - Supported Python versions: Python 3.10+
-- Locally validated in disposable Docker containers:
-  - Linux ARM64 with `python:3.13-slim`
-  - Linux AMD64 under local Docker emulation with `python:3.13-slim`
-- GitHub Actions workflows are included to validate on GitHub-hosted runners for:
-  - Linux x64, pending CI execution
-  - Linux ARM64, pending CI execution
-  - Windows x64, pending CI execution
-  - macOS ARM64, pending CI execution
-  - macOS Intel/x64, pending CI execution
+- Source-package CI validation completed for:
+  - Linux x64
+  - Linux ARM64
+  - Windows x64
+  - macOS ARM64
+  - macOS Intel/x64
 
 Current validation status:
 
-- Already validated locally: Linux ARM64, Linux AMD64 under local Docker emulation, Python 3.13
-- Pending GitHub Actions execution: Windows x64, macOS ARM64, macOS Intel/x64, GitHub-hosted Linux variants, Python 3.10
+- Source package and installable CLI validated across the supported GitHub-hosted platform matrix.
 
 Local Docker validation examples:
 
@@ -185,3 +181,27 @@ docker run --rm --platform linux/amd64 -v "$PWD:/app" -w /app python:3.13-slim s
 ```
 
 Windows and macOS validation are performed using GitHub-hosted runners through the repository workflows.
+
+## Standalone Binaries
+
+Platform-specific standalone binaries can be produced with PyInstaller. These binaries do not require Python to be installed on the target machine.
+
+Windows example:
+
+```powershell
+rdi-recover.exe --version
+rdi-recover.exe inspect .
+```
+
+Linux and macOS example:
+
+```bash
+./rdi-recover --version
+./rdi-recover inspect .
+```
+
+Standalone binary validation status is tracked separately from the Python package. Do not treat a platform's standalone binary as validated until its GitHub Actions binary job has passed.
+
+Windows note: the generated executable is unsigned, so SmartScreen may warn on first launch.
+
+macOS note: the generated binary is unsigned and not notarized, so Gatekeeper may warn or block first launch until the binary is explicitly allowed.

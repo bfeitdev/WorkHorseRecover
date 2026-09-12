@@ -1,0 +1,86 @@
+name: Standalone Binaries
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  binaries:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: windows-x64
+            runner: windows-latest
+            archive_name: rdi-recover-windows-x64.zip
+            artifact_name: rdi-recover-windows-x64
+            binary_path: dist/rdi-recover.exe
+          - label: linux-x64
+            runner: ubuntu-latest
+            archive_name: rdi-recover-linux-x64.tar.gz
+            artifact_name: rdi-recover-linux-x64
+            binary_path: dist/rdi-recover
+          - label: linux-arm64
+            runner: ubuntu-24.04-arm
+            archive_name: rdi-recover-linux-arm64.tar.gz
+            artifact_name: rdi-recover-linux-arm64
+            binary_path: dist/rdi-recover
+          - label: macos-arm64
+            runner: macos-15
+            archive_name: rdi-recover-macos-arm64.tar.gz
+            artifact_name: rdi-recover-macos-arm64
+            binary_path: dist/rdi-recover
+          - label: macos-x64
+            runner: macos-15-intel
+            archive_name: rdi-recover-macos-x64.tar.gz
+            artifact_name: rdi-recover-macos-x64
+            binary_path: dist/rdi-recover
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Platform diagnostics
+        run: |
+          python --version
+          python -c "import platform, sys; print(platform.platform()); print(platform.machine()); print(platform.architecture()); print(sys.version)"
+
+      - name: Install package and PyInstaller
+        run: |
+          python -m pip install .
+          python -m pip install pyinstaller
+
+      - name: Print PyInstaller version
+        run: python -m PyInstaller --version
+
+      - name: Build standalone binary
+        run: |
+          python -c "from pathlib import Path; import shutil; [shutil.rmtree(path) for path in (Path('build'), Path('dist'), Path('release-artifacts')) if path.exists()]"
+          python -m PyInstaller --onefile --clean --noconfirm --paths src --specpath build/pyinstaller-spec --name rdi-recover scripts/rdi_recover_entry.py
+
+      - name: Verify binary exists
+        run: python -c "from pathlib import Path; path = Path(r'${{ matrix.binary_path }}'); assert path.exists(), f'Missing binary: {path}'; print(path); print(path.stat().st_size)"
+
+      - name: Validate standalone binary
+        run: python scripts/validate_standalone_binary.py "${{ matrix.binary_path }}"
+
+      - name: Package standalone artifact
+        run: python scripts/package_standalone_binary.py --binary "${{ matrix.binary_path }}" --archive "release-artifacts/${{ matrix.archive_name }}" --metadata-json "release-artifacts/${{ matrix.artifact_name }}.json"
+
+      - name: Upload standalone artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: |
+            release-artifacts/${{ matrix.archive_name }}
+            release-artifacts/${{ matrix.artifact_name }}.json
