@@ -76,6 +76,37 @@ class Ensemble:
 
 
 @dataclass(frozen=True)
+class SliceEnsemble:
+    """A complete ensemble addressed by its physical, 1-based file position."""
+
+    physical_index: int
+    start: int
+    end_exclusive: int
+    length: int
+    rdi_ensemble_number: int | None
+    structural_status: str
+    checksum_status: str
+
+
+@dataclass(frozen=True)
+class SlicePlan:
+    input_path: Path
+    inventory: FileInventory
+    ensembles: list[SliceEnsemble]
+    removed_indexes: tuple[int, ...]
+    retained_indexes: tuple[int, ...]
+    unparsed_bytes: int
+    trailing_bytes: int
+
+
+@dataclass(frozen=True)
+class SliceValidation:
+    valid_count: int
+    issues: list[str]
+    retained_bytes_match: bool
+
+
+@dataclass(frozen=True)
 class Region:
     file_label: str
     start: int
@@ -1653,8 +1684,169 @@ def inspect_inputs(inputs: Sequence[str], recursive: bool, output_dir: Path | No
     return "\n".join(lines), 0
 
 
+def parse_slice_range(value: str) -> tuple[int, int]:
+    start_text, separator, end_text = value.partition(":")
+    if separator != ":" or not start_text or not end_text:
+        raise ValueError("--range must use inclusive 1-based physical indexes in A:B form")
+    try:
+        start, end = int(start_text), int(end_text)
+    except ValueError as error:
+        raise ValueError("--range must use integer physical indexes in A:B form") from error
+    return start, end
+
+
+def build_slice_plan(
+    input_path: Path,
+    *,
+    first: int | None = None,
+    last: int | None = None,
+    range_spec: str | None = None,
+) -> SlicePlan:
+    """Index one PD0 file in physical byte order and select complete records to remove."""
+    selection_count = sum(value is not None for value in (first, last, range_spec))
+    if selection_count != 1:
+        raise ValueError("exactly one of --first, --last, or --range is required")
+    inventory = inventory_file(input_path)
+    ensembles = [
+        SliceEnsemble(
+            physical_index=index,
+            start=ensemble.start,
+            end_exclusive=ensemble.end_exclusive,
+            length=ensemble.total_bytes,
+            rdi_ensemble_number=ensemble.ensemble_number,
+            structural_status="VALID_ENSEMBLE",
+            checksum_status="VALID",
+        )
+        for index, ensemble in enumerate(inventory.ensembles, start=1)
+    ]
+    total = len(ensembles)
+    if total == 0:
+        raise ValueError("input contains no complete, checksum-valid PD0 ensembles")
+
+    if first is not None:
+        if first <= 0 or first > total:
+            raise ValueError(f"--first must be between 1 and {total}")
+        removed_indexes = tuple(range(1, first + 1))
+    elif last is not None:
+        if last <= 0 or last > total:
+            raise ValueError(f"--last must be between 1 and {total}")
+        removed_indexes = tuple(range(total - last + 1, total + 1))
+    else:
+        start, end = parse_slice_range(range_spec or "")
+        if start <= 0 or end <= 0 or start > end or end > total:
+            raise ValueError(f"--range must be an inclusive range within 1:{total}")
+        removed_indexes = tuple(range(start, end + 1))
+
+    removed_set = set(removed_indexes)
+    retained_indexes = tuple(index for index in range(1, total + 1) if index not in removed_set)
+    unparsed_bytes = sum(region.length for region in inventory.regions if region.classification != "VALID_ENSEMBLE")
+    trailing_bytes, _ = trailing_non_valid_bytes(inventory)
+    return SlicePlan(
+        input_path=input_path,
+        inventory=inventory,
+        ensembles=ensembles,
+        removed_indexes=removed_indexes,
+        retained_indexes=retained_indexes,
+        unparsed_bytes=unparsed_bytes,
+        trailing_bytes=trailing_bytes,
+    )
+
+
+def format_slice_indexes(indexes: Sequence[int]) -> str:
+    if not indexes:
+        return "none"
+    ranges: list[str] = []
+    start = previous = indexes[0]
+    for index in indexes[1:]:
+        if index == previous + 1:
+            previous = index
+            continue
+        ranges.append(str(start) if start == previous else f"{start}-{previous}")
+        start = previous = index
+    ranges.append(str(start) if start == previous else f"{start}-{previous}")
+    return ", ".join(ranges)
+
+
+def render_slice_report(plan: SlicePlan) -> str:
+    by_index = {ensemble.physical_index: ensemble for ensemble in plan.ensembles}
+    lines = [
+        "# PD0 Ensemble Slice",
+        "",
+        f"- Input file: `{plan.input_path}`",
+        f"- Complete ensembles found: {len(plan.ensembles)}",
+        "- User-facing ensemble indexes are physical file order and 1-based; RDI ensemble numbers are informational only.",
+        f"- Remove physical indexes: {format_slice_indexes(plan.removed_indexes)} ({len(plan.removed_indexes)} ensemble(s))",
+        f"- Retain: {len(plan.retained_indexes)} ensemble(s)",
+        f"- Unparsed/non-ensemble bytes: {plan.unparsed_bytes}",
+        f"- Trailing/unparsed bytes after final complete ensemble: {plan.trailing_bytes}",
+        "",
+        "## Ensembles To Remove",
+        "",
+    ]
+    for index in plan.removed_indexes:
+        ensemble = by_index[index]
+        lines.append(
+            f"- physical={index}; bytes={ensemble.start}:{ensemble.end_exclusive}; length={ensemble.length}; "
+            f"RDI ensemble={ensemble.rdi_ensemble_number}; structural={ensemble.structural_status}; checksum={ensemble.checksum_status}"
+        )
+    if plan.unparsed_bytes:
+        lines.extend(
+            [
+                "",
+                "WARNING: output is blocked because copying only complete retained ensembles would discard unparsed source bytes.",
+            ]
+        )
+    return "\n".join(lines) + "\n"
+
+
+def validate_slice_output(output_path: Path, retained_bytes: list[bytes]) -> SliceValidation:
+    validation = validate_recovered_file(output_path)
+    output_inventory = inventory_file(output_path)
+    output_bytes = output_path.read_bytes()
+    expected_bytes = b"".join(retained_bytes)
+    # Duplicate records are valid input for slicing; unlike recovery, slicing never deduplicates.
+    issues = [issue for issue in validation.issues if not issue.startswith("duplicate full-record hashes present:")]
+    if len(output_inventory.ensembles) != len(retained_bytes):
+        issues.append(f"output inventory found {len(output_inventory.ensembles)} complete ensembles; expected {len(retained_bytes)}")
+    if any(region.classification != "VALID_ENSEMBLE" for region in output_inventory.regions):
+        issues.append("output inventory contains unparsed or malformed bytes")
+    retained_bytes_match = output_bytes == expected_bytes
+    if not retained_bytes_match:
+        issues.append("output bytes do not exactly match the concatenated retained input ensembles")
+    return SliceValidation(validation.valid_count, issues, retained_bytes_match)
+
+
+def write_slice_output(plan: SlicePlan, output_path: Path) -> SliceValidation:
+    if plan.unparsed_bytes:
+        raise ValueError("refusing to discard unparsed source bytes; no output was written")
+    if output_path.resolve() == plan.input_path.resolve():
+        raise ValueError("output path must not overwrite the input file")
+    if output_path.exists():
+        raise ValueError(f"refusing to overwrite existing output file: {output_path}")
+
+    source_data = plan.input_path.read_bytes()
+    by_index = {ensemble.physical_index: ensemble for ensemble in plan.ensembles}
+    retained_bytes = [source_data[by_index[index].start : by_index[index].end_exclusive] for index in plan.retained_indexes]
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = output_path.with_name(f".{output_path.name}.slice-tmp")
+    if temporary_path.exists():
+        raise ValueError(f"refusing to replace temporary slice file: {temporary_path}")
+    try:
+        with temporary_path.open("wb") as handle:
+            for ensemble_bytes in retained_bytes:
+                handle.write(ensemble_bytes)
+        validation = validate_slice_output(temporary_path, retained_bytes)
+        if validation.issues:
+            raise ValueError("output validation failed: " + "; ".join(validation.issues))
+        temporary_path.replace(output_path)
+        return validation
+    finally:
+        if temporary_path.exists():
+            temporary_path.unlink()
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Conservative Teledyne RDI WorkHorse PD0 inspection and recovery tool")
+    parser = argparse.ArgumentParser(description="Conservative Teledyne RDI WorkHorse PD0 inspection, recovery, and ensemble slicing tool")
     parser.add_argument("--version", action="version", version=f"rdi-recover {__version__}")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -1666,6 +1858,15 @@ def build_parser() -> argparse.ArgumentParser:
     recover_parser.add_argument("inputs", nargs="+", help="Input .000 files or directories")
     recover_parser.add_argument("--output-dir", required=True, help="Directory for recovered outputs")
     recover_parser.add_argument("--recursive", action="store_true", help="Recursively search directory inputs for .000 files")
+
+    slice_parser = subparsers.add_parser("slice", help="Remove complete PD0 ensembles by physical file order without rewriting retained bytes")
+    slice_parser.add_argument("input", help="Input .000 file")
+    selection = slice_parser.add_mutually_exclusive_group(required=True)
+    selection.add_argument("--first", type=int, help="Remove the first N complete ensembles")
+    selection.add_argument("--last", type=int, help="Remove the last N complete ensembles")
+    selection.add_argument("--range", dest="range_spec", help="Remove inclusive 1-based physical ensemble indexes A:B")
+    slice_parser.add_argument("--output", help="New output .000 file (required unless --dry-run is used)")
+    slice_parser.add_argument("--dry-run", action="store_true", help="Analyze and report the slice without writing a file")
     return parser
 
 
@@ -1677,6 +1878,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         report, exit_code = inspect_inputs(args.inputs, recursive=args.recursive, output_dir=output_dir)
         sys.stdout.write(report)
         return exit_code
+    if args.command == "slice":
+        try:
+            plan = build_slice_plan(Path(args.input), first=args.first, last=args.last, range_spec=args.range_spec)
+            sys.stdout.write(render_slice_report(plan))
+            if args.dry_run:
+                sys.stdout.write("DRY RUN: no output file written.\n")
+                return 0
+            if not args.output:
+                raise ValueError("--output is required unless --dry-run is used")
+            validation = write_slice_output(plan, Path(args.output))
+            sys.stdout.write(f"SLICE VALIDATION PASS: {validation.valid_count} ensembles reparsed; retained bytes match exactly.\n")
+            return 0
+        except (OSError, ValueError) as error:
+            sys.stderr.write(f"SLICE FAILED: {error}\n")
+            return 1
     groups = discover_candidate_groups(args.inputs, recursive=args.recursive, output_dir=output_dir)
     selected_group, status = select_single_group_or_status(groups)
     if status is not None:
