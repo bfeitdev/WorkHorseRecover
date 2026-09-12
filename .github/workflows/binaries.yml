@@ -43,10 +43,10 @@ jobs:
             binary_path: dist/rdi-recover
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.13'
 
@@ -81,7 +81,7 @@ jobs:
           python scripts/package_standalone_binary.py --binary "${{ matrix.binary_path }}" --archive "release-artifacts/${{ matrix.archive_name }}" --metadata-json "release-artifacts/${{ matrix.artifact_name }}.json"
 
       - name: Upload standalone artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact_name }}
           path: |
