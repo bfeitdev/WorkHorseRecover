@@ -1,0 +1,108 @@
+name: Test
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: ${{ matrix.os }} py${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-15]
+        python-version: ['3.10', '3.13']
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Platform diagnostics
+        run: |
+          python -c "import platform, sys; print('platform=', platform.platform()); print('machine=', platform.machine()); print('architecture=', platform.architecture()); print('python=', sys.version)"
+
+      - name: Install package
+        run: python -m pip install .
+
+      - name: Verify CLI version
+        run: rdi-recover --version
+
+      - name: Verify CLI help
+        run: python -c "import subprocess, sys; cmd = ['rdi-recover', '--help']; result = subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL); sys.exit(result.returncode)"
+
+      - name: Verify module version
+        run: python -m rdi_recover --version
+
+      - name: Run synthetic tests
+        run: python -m unittest discover -s tests -p 'test_*.py'
+
+  linux-arm64:
+    name: ubuntu-24.04-arm py3.13
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Platform diagnostics
+        run: |
+          python -c "import platform, sys; print('platform=', platform.platform()); print('machine=', platform.machine()); print('architecture=', platform.architecture()); print('python=', sys.version)"
+
+      - name: Install package
+        run: python -m pip install .
+
+      - name: Verify CLI version
+        run: rdi-recover --version
+
+      - name: Verify CLI help
+        run: python -c "import subprocess, sys; cmd = ['rdi-recover', '--help']; result = subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL); sys.exit(result.returncode)"
+
+      - name: Verify module version
+        run: python -m rdi_recover --version
+
+      - name: Run synthetic tests
+        run: python -m unittest discover -s tests -p 'test_*.py'
+
+  macos-intel:
+    name: macos-15-intel py3.13
+    runs-on: macos-15-intel
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Platform diagnostics
+        run: |
+          python -c "import platform, sys; print('platform=', platform.platform()); print('machine=', platform.machine()); print('architecture=', platform.architecture()); print('python=', sys.version)"
+
+      - name: Install package
+        run: python -m pip install .
+
+      - name: Verify CLI version
+        run: rdi-recover --version
+
+      - name: Verify CLI help
+        run: python -c "import subprocess, sys; cmd = ['rdi-recover', '--help']; result = subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL); sys.exit(result.returncode)"
+
+      - name: Verify module version
+        run: python -m rdi_recover --version
+
+      - name: Run synthetic tests
+        run: python -m unittest discover -s tests -p 'test_*.py'
