@@ -27,7 +27,7 @@ jobs:
           GITHUB_REF_NAME: ${{ github.ref_name }}
         run: |
           tag_version="${GITHUB_REF_NAME#v}"
-          package_version="$(PYTHONPATH=src python -c \"import rdi_recover; print(rdi_recover.__version__)\")"
+          package_version="$(PYTHONPATH=src python -c 'import rdi_recover; print(rdi_recover.__version__)')"
           if [ "$tag_version" != "$package_version" ]; then
             echo "Tag version '$tag_version' does not match package version '$package_version'."
             exit 1
