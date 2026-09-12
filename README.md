@@ -22,11 +22,11 @@ Development / CI artifacts:
 Release preparation status:
 
 - `v1.0.0` is the initial source/Python package release.
-- `v1.0.3` is prepared as the first release intended to publish validated standalone binaries for all five native targets.
+- `v1.0.4` is prepared as the first release intended to publish validated standalone binaries for all five native targets.
 - GitHub Releases is the primary intended download location for end users.
 - GitHub Actions artifacts remain useful for development and CI verification, but they are not the primary end-user distribution path.
 
-Until the `v1.0.3` tag and release are actually published, the latest GitHub Release page may still point to `v1.0.0`, which does not contain standalone binaries. This README prepares the stable release download locations that the first standalone-binary release will use.
+Until the `v1.0.4` tag and release are actually published, the latest GitHub Release page may still point to `v1.0.0`, which does not contain standalone binaries. This README prepares the stable release download locations that the first standalone-binary release will use.
 
 Supported standalone downloads:
 
@@ -147,7 +147,7 @@ rdi-recover --version
 Expected output:
 
 ```text
-rdi-recover 1.0.3
+rdi-recover 1.0.4
 ```
 
 ### Editable Developer Install
