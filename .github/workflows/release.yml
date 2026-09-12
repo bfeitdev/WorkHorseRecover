@@ -178,7 +178,49 @@ jobs:
 
       - name: Verify expected release assets exist
         run: |
-          python -c "from pathlib import Path; expected = {'whl': 1, 'sdist': 1, 'rdi-recover-windows-x64.zip': 1, 'rdi-recover-linux-x64.tar.gz': 1, 'rdi-recover-linux-arm64.tar.gz': 1, 'rdi-recover-macos-arm64.tar.gz': 1, 'rdi-recover-macos-x64.tar.gz': 1}; root = Path('release-assets'); wheels = list(root.glob('**/*.whl')); sdists = list(root.glob('**/*.tar.gz')); named = [path.name for path in root.glob('**/*') if path.is_file()]; problems = []; problems.extend([] if len(wheels) == expected['whl'] else [f'expected {expected[\'whl\']} wheel, found {len(wheels)}']); problems.extend([] if len([p for p in sdists if p.name.endswith('.tar.gz') and p.name.startswith('rdi_recover-')]) == expected['sdist'] else [f'expected {expected[\'sdist\']} python sdist, found {len([p for p in sdists if p.name.endswith(\'.tar.gz\') and p.name.startswith(\'rdi_recover-\')])}']); archive_names = {'rdi-recover-windows-x64.zip', 'rdi-recover-linux-x64.tar.gz', 'rdi-recover-linux-arm64.tar.gz', 'rdi-recover-macos-arm64.tar.gz', 'rdi-recover-macos-x64.tar.gz'}; missing = sorted(name for name in archive_names if name not in named); problems.extend([f'missing standalone archive: {name}' for name in missing]); extras = sorted(name for name in named if name.endswith(('.zip', '.tar.gz', '.whl')) and name not in archive_names and not name.startswith('rdi_recover-')); problems.extend([f'unexpected release asset: {name}' for name in extras]); assert not problems, '; '.join(problems)"
+          python - <<'PY'
+          from pathlib import Path
+
+          root = Path("release-assets")
+          expected_wheel_count = 1
+          expected_sdist_count = 1
+          archive_names = {
+              "rdi-recover-windows-x64.zip",
+              "rdi-recover-linux-x64.tar.gz",
+              "rdi-recover-linux-arm64.tar.gz",
+              "rdi-recover-macos-arm64.tar.gz",
+              "rdi-recover-macos-x64.tar.gz",
+          }
+
+          wheels = list(root.glob("**/*.whl"))
+          sdists = [
+              path
+              for path in root.glob("**/*.tar.gz")
+              if path.name.startswith("rdi_recover-")
+          ]
+          named = [path.name for path in root.glob("**/*") if path.is_file()]
+
+          problems = []
+          if len(wheels) != expected_wheel_count:
+              problems.append(f"expected {expected_wheel_count} wheel, found {len(wheels)}")
+          if len(sdists) != expected_sdist_count:
+              problems.append(f"expected {expected_sdist_count} python sdist, found {len(sdists)}")
+
+          missing = sorted(name for name in archive_names if name not in named)
+          problems.extend(f"missing standalone archive: {name}" for name in missing)
+
+          extras = sorted(
+              name
+              for name in named
+              if name.endswith((".zip", ".tar.gz", ".whl"))
+              and name not in archive_names
+              and not name.startswith("rdi_recover-")
+          )
+          problems.extend(f"unexpected release asset: {name}" for name in extras)
+
+          if problems:
+              raise SystemExit("; ".join(problems))
+          PY
 
       - name: Create or update GitHub Release
         uses: softprops/action-gh-release@v3
