@@ -1,10 +1,10 @@
 # rdi-recover
 
-`rdi-recover` is a conservative command-line tool for inspecting and recovering trustworthy complete ensembles from Teledyne RDI WorkHorse PD0 `.000` files.
+`rdi-recover` is a conservative command-line tool for inspecting, recovering, and explicitly slicing complete ensembles from Teledyne RDI WorkHorse PD0 `.000` files.
 
 It is designed to help operators and developers assess split files, overlaps, gaps, truncated fragments, and configuration changes without fabricating measurement content.
 
-It scans PD0 files for structurally valid ensembles, validates stored checksums, preserves original measurement bytes, detects gaps, truncation, and duplicate ensembles, and can combine accepted records into a clean recovered output file. It does not fabricate missing measurements or rewrite invalid measurement data merely to make a file parse.
+It scans PD0 files for structurally valid ensembles, validates stored checksums, preserves original measurement bytes, detects gaps, truncation, and duplicate ensembles, can combine accepted records into a clean recovered output file, and can remove an operator-selected contiguous run of complete ensembles without rewriting retained records. It does not fabricate missing measurements or rewrite invalid measurement data merely to make a file parse.
 
 ## Download Standalone Binaries
 
@@ -19,14 +19,7 @@ Development / CI artifacts:
 - [GitHub Actions](https://github.com/bfeitdev/WorkHorseRecover/actions)
 - [Standalone Binaries workflow](https://github.com/bfeitdev/WorkHorseRecover/actions/workflows/binaries.yml)
 
-Release preparation status:
-
-- `v1.0.0` is the initial source/Python package release.
-- `v1.0.4` is prepared as the first release intended to publish validated standalone binaries for all five native targets.
-- GitHub Releases is the primary intended download location for end users.
-- GitHub Actions artifacts remain useful for development and CI verification, but they are not the primary end-user distribution path.
-
-Until the `v1.0.4` tag and release are actually published, the latest GitHub Release page may still point to `v1.0.0`, which does not contain standalone binaries. This README prepares the stable release download locations that the first standalone-binary release will use.
+GitHub Releases is the primary download location for end users. Published releases include validated standalone binaries for Windows x64, Linux x64, Linux ARM64, macOS ARM64, and macOS x64; GitHub Actions artifacts remain useful for development and CI verification.
 
 Supported standalone downloads:
 
@@ -100,15 +93,17 @@ Security notes:
 
 ## Quick Start
 
-Analyze input and recover trustworthy ensembles in two commands:
+Analyze, recover, or explicitly slice complete ensembles:
 
 ```bash
 rdi-recover inspect .
 rdi-recover recover . --output-dir recovered_output
+rdi-recover slice deployment.000 --last 15 --output deployment_slice15.000
 ```
 
 - `inspect` analyzes input without creating recovered PD0 output.
 - `recover` creates recovered output using only accepted original records and safely reconstructed records under the existing conservative policy.
+- `slice` removes an operator-selected contiguous range of complete ensembles from one file without modifying the input or retained records.
 
 ## Recovery Philosophy
 
@@ -120,6 +115,8 @@ rdi-recover recover . --output-dir recovered_output
 - It does not generate replacement checksums.
 - It does not silently merge multiple recursively discovered datasets into one output.
 - It withholds recovery output when ambiguity or scientifically meaningful conflict is detected.
+- Slice refuses any source with unparsed or non-ensemble bytes, including malformed trailing data, rather than silently dropping those bytes.
+- Slice is explicit ensemble removal only. It does not remove depth cells/bins and does not automatically identify false bottoms or bad measurements.
 
 ## Python Package Requirements
 
@@ -147,7 +144,7 @@ rdi-recover --version
 Expected output:
 
 ```text
-rdi-recover 1.0.4
+rdi-recover 1.0.5
 ```
 
 ### Editable Developer Install
@@ -192,6 +189,11 @@ Examples:
 ```bash
 rdi-recover inspect .
 rdi-recover recover . --output-dir recovered
+rdi-recover slice deployment.000 --last 15 --output deployment_slice15.000
+rdi-recover slice deployment.000 --last 15 --dry-run
+rdi-recover slice deployment.000 --first 10 --output deployment_first10_removed.000
+rdi-recover slice deployment.000 --range 12000:12020 --output deployment_range_removed.000
+python -m rdi_recover slice deployment.000 --last 15 --dry-run
 rdi-recover inspect . --recursive
 ```
 
@@ -199,12 +201,15 @@ Usage model:
 
 - `inspect`: analyzes files without creating recovered PD0 output
 - `recover`: creates recovered output from only accepted original records and safely reconstructed records under the existing conservative policy
+- `slice`: removes a contiguous selection of complete ensembles from one file without modifying retained ensemble bytes
 
 General forms:
 
 ```bash
 rdi-recover inspect FILES...
 rdi-recover recover FILES... --output-dir recovered_output
+rdi-recover slice INPUT.000 (--first N | --last N | --range A:B) --output OUTPUT.000
+python -m rdi_recover slice INPUT.000 --last N --output OUTPUT.000
 ```
 
 ## Input Discovery Rules
@@ -237,6 +242,28 @@ rdi-recover recover DATA_DIR --output-dir recovered
 rdi-recover recover DATA_DIR --output-dir recovered --recursive
 rdi-recover recover file1.000 file2.000 --output-dir recovered
 ```
+
+### Slice
+
+Remove complete ensembles from a single input file while preserving every retained ensemble byte-for-byte:
+
+```bash
+rdi-recover slice deployment.000 --last 15 --output deployment_slice15.000
+rdi-recover slice deployment.000 --first 10 --output deployment_first10_removed.000
+rdi-recover slice deployment.000 --range 12000:12020 --output deployment_range_removed.000
+rdi-recover slice deployment.000 --last 15 --dry-run
+python -m rdi_recover slice deployment.000 --last 15 --dry-run
+```
+
+- `--first`, `--last`, and `--range` are mutually exclusive.
+- `--range A:B` is inclusive.
+- Slice indexes are physical ensemble order in the input file and are 1-based. They are not the RDI ensemble number stored in an ensemble; that number is reported only for reference.
+- The command reports every selected ensemble's byte offsets, RDI ensemble number, and parser/checksum status before writing.
+- `--dry-run` performs the same scan and validation without creating an output file.
+- Slicing never modifies the input. The output must be a new file: existing output files and input-as-output are refused.
+- Retained records are copied byte-for-byte without recalculating checksums or rewriting bytes, then the output is reparsed and compared byte-for-byte with the retained input records before publication.
+- If any source bytes are not complete validated ensembles, including malformed or truncated trailing data, they are reported and writing is refused so they cannot be silently dropped.
+- Depth-cell/bin removal is not implemented. Slice does not automatically detect false bottoms; it removes only the ensembles explicitly selected by the operator.
 
 ## Output Files
 

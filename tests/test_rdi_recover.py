@@ -281,7 +281,7 @@ class RdiRecoverTests(unittest.TestCase):
             env=self.uninstalled_subprocess_env,
         )
         self.assertEqual(result.returncode, 0)
-        self.assertIn("rdi-recover 1.0.4", result.stdout)
+        self.assertIn("rdi-recover 1.0.5", result.stdout)
 
     def test_non_recursive_directory_discovery_does_not_enter_subdirectories(self) -> None:
         top = self.temp_dir / "top"
@@ -335,6 +335,117 @@ class RdiRecoverTests(unittest.TestCase):
         groups = rdi_recover.discover_candidate_groups([str(root)], recursive=True, output_dir=output_dir)
         self.assertEqual(len(groups), 1)
         self.assertEqual([path.name for path in groups[0].files], ["real.000"])
+
+    def test_slice_removes_first_ensembles_without_changing_input(self) -> None:
+        base = datetime(2024, 1, 1)
+        source = self.temp_dir / "source.000"
+        records = [build_pd0_like_ensemble(index, base + timedelta(seconds=index)) for index in range(1, 5)]
+        write_file(source, records)
+        original_bytes = source.read_bytes()
+        plan = rdi_recover.build_slice_plan(source, first=2)
+        output = self.temp_dir / "first_removed.000"
+
+        validation = rdi_recover.write_slice_output(plan, output)
+
+        self.assertEqual(plan.removed_indexes, (1, 2))
+        self.assertEqual(plan.retained_indexes, (3, 4))
+        self.assertEqual(output.read_bytes(), b"".join(records[2:]))
+        self.assertEqual(source.read_bytes(), original_bytes)
+        self.assertEqual(validation.valid_count, 2)
+        self.assertFalse(validation.issues)
+        self.assertTrue(validation.retained_bytes_match)
+
+    def test_slice_removes_last_and_middle_ranges_byte_identically(self) -> None:
+        base = datetime(2024, 1, 1)
+        source = self.temp_dir / "source.000"
+        records = [build_pd0_like_ensemble(index, base + timedelta(seconds=index)) for index in range(1, 6)]
+        write_file(source, records)
+
+        last_plan = rdi_recover.build_slice_plan(source, last=2)
+        last_output = self.temp_dir / "last_removed.000"
+        rdi_recover.write_slice_output(last_plan, last_output)
+        self.assertEqual(last_output.read_bytes(), b"".join(records[:3]))
+
+        range_plan = rdi_recover.build_slice_plan(source, range_spec="2:4")
+        range_output = self.temp_dir / "middle_removed.000"
+        validation = rdi_recover.write_slice_output(range_plan, range_output)
+        self.assertEqual(range_plan.removed_indexes, (2, 3, 4))
+        self.assertEqual(range_output.read_bytes(), records[0] + records[4])
+        self.assertEqual(validation.valid_count, 2)
+        self.assertFalse(validation.issues)
+
+    def test_slice_removes_exactly_one_by_physical_index_despite_rdi_rollover(self) -> None:
+        base = datetime(2024, 1, 1)
+        source = self.temp_dir / "rollover.000"
+        records = [
+            build_pd0_like_ensemble(65535, base),
+            build_pd0_like_ensemble(65536, base + timedelta(seconds=1)),
+            build_pd0_like_ensemble(1, base + timedelta(seconds=2)),
+        ]
+        write_file(source, records)
+        plan = rdi_recover.build_slice_plan(source, range_spec="2:2")
+        output = self.temp_dir / "one_removed.000"
+
+        rdi_recover.write_slice_output(plan, output)
+
+        self.assertEqual([entry.rdi_ensemble_number for entry in plan.ensembles], [65535, 65536, 1])
+        self.assertEqual(plan.removed_indexes, (2,))
+        self.assertEqual(output.read_bytes(), records[0] + records[2])
+
+    def test_slice_rejects_invalid_or_combined_selections(self) -> None:
+        base = datetime(2024, 1, 1)
+        source = self.temp_dir / "source.000"
+        write_file(source, [build_pd0_like_ensemble(index, base + timedelta(seconds=index)) for index in range(1, 3)])
+        for kwargs in ({"first": 0}, {"last": -1}, {"range_spec": "3:3"}, {"range_spec": "2:1"}, {"first": 1, "last": 1}):
+            with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
+                rdi_recover.build_slice_plan(source, **kwargs)
+
+        result = subprocess.run(
+            [sys.executable, "-m", "rdi_recover", "slice", str(source), "--first", "1", "--last", "1", "--output", str(self.temp_dir / "out.000")],
+            capture_output=True,
+            text=True,
+            check=False,
+            env=self.uninstalled_subprocess_env,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("not allowed with argument", result.stderr)
+
+    def test_slice_dry_run_writes_nothing_and_reports_trailing_data_safely(self) -> None:
+        base = datetime(2024, 1, 1)
+        source = self.temp_dir / "trailing.000"
+        write_file(source, [build_pd0_like_ensemble(1, base), build_pd0_like_ensemble(2, base + timedelta(seconds=1)), b"truncated"])
+        output = self.temp_dir / "should_not_exist.000"
+
+        result = subprocess.run(
+            [sys.executable, "-m", "rdi_recover", "slice", str(source), "--last", "1", "--dry-run"],
+            capture_output=True,
+            text=True,
+            check=False,
+            env=self.uninstalled_subprocess_env,
+        )
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("Trailing/unparsed bytes after final complete ensemble: 9", result.stdout)
+        self.assertIn("DRY RUN: no output file written.", result.stdout)
+        self.assertFalse(output.exists())
+
+        plan = rdi_recover.build_slice_plan(source, last=1)
+        with self.assertRaises(ValueError):
+            rdi_recover.write_slice_output(plan, output)
+        self.assertFalse(output.exists())
+
+    def test_slice_rejects_input_as_output_and_existing_output(self) -> None:
+        base = datetime(2024, 1, 1)
+        source = self.temp_dir / "source.000"
+        write_file(source, [build_pd0_like_ensemble(1, base), build_pd0_like_ensemble(2, base + timedelta(seconds=1))])
+        plan = rdi_recover.build_slice_plan(source, first=1)
+        with self.assertRaises(ValueError):
+            rdi_recover.write_slice_output(plan, source)
+
+        existing = self.temp_dir / "existing.000"
+        existing.write_bytes(b"do not replace")
+        with self.assertRaises(ValueError):
+            rdi_recover.write_slice_output(plan, existing)
+        self.assertEqual(existing.read_bytes(), b"do not replace")
 
 
 if __name__ == "__main__":
