@@ -10,33 +10,33 @@ It scans PD0 files for structurally valid ensembles, validates stored checksums,
 
 Prebuilt standalone binaries are available for Windows, Linux, and macOS. Python is not required when using these builds.
 
-Stable releases:
+Primary download location:
 
-- [GitHub Releases](https://github.com/bfeitdev/WorkHorseRecover/releases)
+- [GitHub Releases](https://github.com/bfeitdev/WorkHorseRecover/releases/latest)
 
-CI / development build artifacts:
+Development / CI artifacts:
 
 - [GitHub Actions](https://github.com/bfeitdev/WorkHorseRecover/actions)
 - [Standalone Binaries workflow](https://github.com/bfeitdev/WorkHorseRecover/actions/workflows/binaries.yml)
 
-Current release status:
+Release preparation status:
 
 - `v1.0.0` is the initial source/Python package release.
-- Standalone native binaries are validated in GitHub Actions.
-- The standalone binaries are currently available as workflow artifacts.
-- Permanent release downloads for standalone binaries will be attached to future tagged releases.
+- `v1.0.1` is prepared as the first release intended to publish validated standalone binaries for all five native targets.
+- GitHub Releases is the primary intended download location for end users.
+- GitHub Actions artifacts remain useful for development and CI verification, but they are not the primary end-user distribution path.
 
-The current validated standalone binaries are available as GitHub Actions workflow artifacts. Permanent standalone downloads will be attached to future tagged GitHub Releases. The `v1.0.0` release does not contain standalone binaries.
+Until the `v1.0.1` tag and release are actually published, the latest GitHub Release page may still point to `v1.0.0`, which does not contain standalone binaries. This README prepares the stable release download locations that the first standalone-binary release will use.
 
 Supported standalone downloads:
 
-| Platform | Architecture | Package name |
+| Platform | Architecture | Download |
 | --- | --- | --- |
-| Windows | x64 | `rdi-recover-windows-x64.zip` |
-| Linux | x64 | `rdi-recover-linux-x64.tar.gz` |
-| Linux | ARM64 | `rdi-recover-linux-arm64.tar.gz` |
-| macOS | Apple Silicon ARM64 | `rdi-recover-macos-arm64.tar.gz` |
-| macOS | Intel x64 | `rdi-recover-macos-x64.tar.gz` |
+| Windows | x64 | [`rdi-recover-windows-x64.zip`](https://github.com/bfeitdev/WorkHorseRecover/releases/latest/download/rdi-recover-windows-x64.zip) |
+| Linux | x64 | [`rdi-recover-linux-x64.tar.gz`](https://github.com/bfeitdev/WorkHorseRecover/releases/latest/download/rdi-recover-linux-x64.tar.gz) |
+| Linux | ARM64 | [`rdi-recover-linux-arm64.tar.gz`](https://github.com/bfeitdev/WorkHorseRecover/releases/latest/download/rdi-recover-linux-arm64.tar.gz) |
+| macOS | Apple Silicon ARM64 | [`rdi-recover-macos-arm64.tar.gz`](https://github.com/bfeitdev/WorkHorseRecover/releases/latest/download/rdi-recover-macos-arm64.tar.gz) |
+| macOS | Intel x64 | [`rdi-recover-macos-x64.tar.gz`](https://github.com/bfeitdev/WorkHorseRecover/releases/latest/download/rdi-recover-macos-x64.tar.gz) |
 
 Architecture help:
 
@@ -147,7 +147,7 @@ rdi-recover --version
 Expected output:
 
 ```text
-rdi-recover 1.0.0
+rdi-recover 1.0.1
 ```
 
 ### Editable Developer Install
