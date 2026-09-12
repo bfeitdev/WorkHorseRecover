@@ -12,9 +12,11 @@ from datetime import datetime
 from pathlib import Path
 
 try:
+    from rdi_recover import __version__
     from rdi_recover.rdi_recover import FIXED_LEADER_ID, VARIABLE_LEADER_ID, checksum_rdi, validate_recovered_file
 except ImportError:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+    from rdi_recover import __version__
     from rdi_recover.rdi_recover import FIXED_LEADER_ID, VARIABLE_LEADER_ID, checksum_rdi, validate_recovered_file
 
 
@@ -84,7 +86,7 @@ def read_csv_rows(path: Path) -> list[dict[str, str]]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("binary")
-    parser.add_argument("--expected-version", default="rdi-recover 1.0.0")
+    parser.add_argument("--expected-version", default=f"rdi-recover {__version__}")
     args = parser.parse_args(argv)
 
     binary = Path(args.binary).resolve()
