@@ -6,19 +6,47 @@ on:
       - 'v*'
 
 jobs:
-  source-dist:
+  validate-tag-version:
     permissions:
       contents: read
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.ref }}
           fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+
+      - name: Verify tag matches package version
+        env:
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+        run: |
+          tag_version="${GITHUB_REF_NAME#v}"
+          package_version="$(PYTHONPATH=src python -c \"import rdi_recover; print(rdi_recover.__version__)\")"
+          if [ "$tag_version" != "$package_version" ]; then
+            echo "Tag version '$tag_version' does not match package version '$package_version'."
+            exit 1
+          fi
+
+  source-dist:
+    needs: validate-tag-version
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
         with:
           python-version: '3.13'
 
@@ -48,12 +76,13 @@ jobs:
           python -c "import subprocess, sys; cmd = ['rdi-recover', '--help']; result = subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL); sys.exit(result.returncode)"
 
       - name: Upload Python distribution artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: python-dist
           path: dist/*
 
   standalone-binaries:
+    needs: validate-tag-version
     permissions:
       contents: read
     runs-on: ${{ matrix.runner }}
@@ -88,13 +117,13 @@ jobs:
             binary_path: dist/rdi-recover
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.ref }}
           fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.13'
 
@@ -129,7 +158,7 @@ jobs:
           python scripts/package_standalone_binary.py --binary "${{ matrix.binary_path }}" --archive "release-artifacts/${{ matrix.archive_name }}" --metadata-json "release-artifacts/${{ matrix.artifact_name }}.json"
 
       - name: Upload standalone artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact_name }}
           path: |
@@ -143,7 +172,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: release-assets
 

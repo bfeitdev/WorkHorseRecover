@@ -4,6 +4,112 @@
 
 It is designed to help operators and developers assess split files, overlaps, gaps, truncated fragments, and configuration changes without fabricating measurement content.
 
+It scans PD0 files for structurally valid ensembles, validates stored checksums, preserves original measurement bytes, detects gaps, truncation, and duplicate ensembles, and can combine accepted records into a clean recovered output file. It does not fabricate missing measurements or rewrite invalid measurement data merely to make a file parse.
+
+## Download Standalone Binaries
+
+Prebuilt standalone binaries are available for Windows, Linux, and macOS. Python is not required when using these builds.
+
+Stable releases:
+
+- [GitHub Releases](https://github.com/bfeitdev/WorkHorseRecover/releases)
+
+CI / development build artifacts:
+
+- [GitHub Actions](https://github.com/bfeitdev/WorkHorseRecover/actions)
+- [Standalone Binaries workflow](https://github.com/bfeitdev/WorkHorseRecover/actions/workflows/binaries.yml)
+
+Current release status:
+
+- `v1.0.0` is the initial source/Python package release.
+- Standalone native binaries are validated in GitHub Actions.
+- The standalone binaries are currently available as workflow artifacts.
+- Permanent release downloads for standalone binaries will be attached to future tagged releases.
+
+The current validated standalone binaries are available as GitHub Actions workflow artifacts. Permanent standalone downloads will be attached to future tagged GitHub Releases. The `v1.0.0` release does not contain standalone binaries.
+
+Supported standalone downloads:
+
+| Platform | Architecture | Package name |
+| --- | --- | --- |
+| Windows | x64 | `rdi-recover-windows-x64.zip` |
+| Linux | x64 | `rdi-recover-linux-x64.tar.gz` |
+| Linux | ARM64 | `rdi-recover-linux-arm64.tar.gz` |
+| macOS | Apple Silicon ARM64 | `rdi-recover-macos-arm64.tar.gz` |
+| macOS | Intel x64 | `rdi-recover-macos-x64.tar.gz` |
+
+Architecture help:
+
+- Windows: most current Windows PCs use x64.
+- Linux: run `uname -m`
+- `x86_64` -> `linux-x64`
+- `aarch64` -> `linux-arm64`
+- macOS: run `uname -m`
+- `arm64` -> `macos-arm64` / Apple Silicon
+- `x86_64` -> `macos-x64` / Intel
+
+Windows standalone example:
+
+1. Download `rdi-recover-windows-x64.zip`.
+2. Extract it.
+3. Run:
+
+```powershell
+rdi-recover.exe --version
+rdi-recover.exe inspect .
+rdi-recover.exe recover . --output-dir recovered_output
+```
+
+No Python installation is required.
+
+Linux standalone example:
+
+1. Download the correct archive for your architecture.
+2. Extract it.
+3. Run:
+
+```bash
+tar -xzf rdi-recover-linux-x64.tar.gz
+chmod +x rdi-recover
+./rdi-recover --version
+./rdi-recover inspect .
+./rdi-recover recover . --output-dir recovered_output
+```
+
+For Linux ARM64, extract `rdi-recover-linux-arm64.tar.gz` instead.
+
+macOS standalone example:
+
+1. Download `rdi-recover-macos-arm64.tar.gz` for Apple Silicon or `rdi-recover-macos-x64.tar.gz` for Intel.
+2. Extract it.
+3. Run:
+
+```bash
+tar -xzf rdi-recover-macos-arm64.tar.gz
+chmod +x rdi-recover
+./rdi-recover --version
+./rdi-recover inspect .
+./rdi-recover recover . --output-dir recovered_output
+```
+
+Security notes:
+
+- Windows executable is currently unsigned. SmartScreen may warn on first launch.
+- macOS binaries are currently unsigned and not notarized. Gatekeeper may warn or block first launch.
+- Code signing and notarization are planned future distribution improvements.
+
+## Quick Start
+
+Analyze input and recover trustworthy ensembles in two commands:
+
+```bash
+rdi-recover inspect .
+rdi-recover recover . --output-dir recovered_output
+```
+
+- `inspect` analyzes input without creating recovered PD0 output.
+- `recover` creates recovered output using only accepted original records and safely reconstructed records under the existing conservative policy.
+
 ## Recovery Philosophy
 
 `rdi-recover` is intentionally conservative.
@@ -15,7 +121,9 @@ It is designed to help operators and developers assess split files, overlaps, ga
 - It does not silently merge multiple recursively discovered datasets into one output.
 - It withholds recovery output when ambiguity or scientifically meaningful conflict is detected.
 
-## Requirements
+## Python Package Requirements
+
+These requirements apply only to Python-package installation. Standalone binaries do not require Python.
 
 - Python 3.10+
 - Windows, macOS, or Linux
@@ -85,6 +193,18 @@ Examples:
 rdi-recover inspect .
 rdi-recover recover . --output-dir recovered
 rdi-recover inspect . --recursive
+```
+
+Usage model:
+
+- `inspect`: analyzes files without creating recovered PD0 output
+- `recover`: creates recovered output from only accepted original records and safely reconstructed records under the existing conservative policy
+
+General forms:
+
+```bash
+rdi-recover inspect FILES...
+rdi-recover recover FILES... --output-dir recovered_output
 ```
 
 ## Input Discovery Rules
@@ -172,6 +292,8 @@ Current validation status:
 
 - Source package and installable CLI validated across the supported GitHub-hosted platform matrix.
 
+Standalone binary validation is tracked separately from the Python package. The standalone matrix passed natively on GitHub-hosted runners for Windows x64, Linux x64, Linux ARM64, macOS ARM64, and macOS Intel/x64.
+
 Local Docker validation examples:
 
 ```bash
@@ -181,27 +303,3 @@ docker run --rm --platform linux/amd64 -v "$PWD:/app" -w /app python:3.13-slim s
 ```
 
 Windows and macOS validation are performed using GitHub-hosted runners through the repository workflows.
-
-## Standalone Binaries
-
-Platform-specific standalone binaries can be produced with PyInstaller. These binaries do not require Python to be installed on the target machine.
-
-Windows example:
-
-```powershell
-rdi-recover.exe --version
-rdi-recover.exe inspect .
-```
-
-Linux and macOS example:
-
-```bash
-./rdi-recover --version
-./rdi-recover inspect .
-```
-
-Standalone binary validation status is tracked separately from the Python package. Do not treat a platform's standalone binary as validated until its GitHub Actions binary job has passed.
-
-Windows note: the generated executable is unsigned, so SmartScreen may warn on first launch.
-
-macOS note: the generated binary is unsigned and not notarized, so Gatekeeper may warn or block first launch until the binary is explicitly allowed.
