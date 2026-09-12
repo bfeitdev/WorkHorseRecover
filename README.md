@@ -93,17 +93,19 @@ Security notes:
 
 ## Quick Start
 
-Analyze, recover, or explicitly slice complete ensembles:
+Analyze, recover, remove complete ensembles, or trim final depth cells:
 
 ```bash
 rdi-recover inspect .
 rdi-recover recover . --output-dir recovered_output
 rdi-recover slice deployment.000 --last 15 --output deployment_slice15.000
+rdi-recover slice-bins deployment.000 --last 15 --dry-run
 ```
 
 - `inspect` analyzes input without creating recovered PD0 output.
 - `recover` creates recovered output using only accepted original records and safely reconstructed records under the existing conservative policy.
-- `slice` removes an operator-selected contiguous range of complete ensembles from one file without modifying the input or retained records.
+- `slice` removes an operator-selected contiguous range of complete ensembles/time profiles from one file without modifying the input or retained records.
+- `slice-bins` removes the final N depth cells/bins from every ensemble after proving the standard PD0 profile layout is safe to rewrite.
 
 ## Recovery Philosophy
 
@@ -115,8 +117,9 @@ rdi-recover slice deployment.000 --last 15 --output deployment_slice15.000
 - It does not generate replacement checksums.
 - It does not silently merge multiple recursively discovered datasets into one output.
 - It withholds recovery output when ambiguity or scientifically meaningful conflict is detected.
-- Slice refuses any source with unparsed or non-ensemble bytes, including malformed trailing data, rather than silently dropping those bytes.
-- Slice is explicit ensemble removal only. It does not remove depth cells/bins and does not automatically identify false bottoms or bad measurements.
+- `slice` refuses any source with unparsed or non-ensemble bytes, including malformed trailing data, rather than silently dropping those bytes.
+- `slice-bins` refuses unsafe or unsupported input rather than guessing when layouts, checksums, or expected block sizes are inconsistent.
+- Neither slicing command automatically identifies false bottoms or bad measurements.
 
 ## Python Package Requirements
 
@@ -144,7 +147,7 @@ rdi-recover --version
 Expected output:
 
 ```text
-rdi-recover 1.0.5
+rdi-recover 1.1.0
 ```
 
 ### Editable Developer Install
@@ -194,6 +197,8 @@ rdi-recover slice deployment.000 --last 15 --dry-run
 rdi-recover slice deployment.000 --first 10 --output deployment_first10_removed.000
 rdi-recover slice deployment.000 --range 12000:12020 --output deployment_range_removed.000
 python -m rdi_recover slice deployment.000 --last 15 --dry-run
+rdi-recover slice-bins deployment.000 --last 15 --dry-run
+rdi-recover slice-bins deployment.000 --last 15 --output deployment_bins15_removed.000
 rdi-recover inspect . --recursive
 ```
 
@@ -201,7 +206,8 @@ Usage model:
 
 - `inspect`: analyzes files without creating recovered PD0 output
 - `recover`: creates recovered output from only accepted original records and safely reconstructed records under the existing conservative policy
-- `slice`: removes a contiguous selection of complete ensembles from one file without modifying retained ensemble bytes
+- `slice`: removes a contiguous selection of complete ensembles/time profiles from one file without modifying retained ensemble bytes
+- `slice-bins`: removes final depth cells/bins from every ensemble in a proven standard PD0 profile layout
 
 General forms:
 
@@ -210,6 +216,8 @@ rdi-recover inspect FILES...
 rdi-recover recover FILES... --output-dir recovered_output
 rdi-recover slice INPUT.000 (--first N | --last N | --range A:B) --output OUTPUT.000
 python -m rdi_recover slice INPUT.000 --last N --output OUTPUT.000
+rdi-recover slice-bins INPUT.000 --last N --dry-run
+rdi-recover slice-bins INPUT.000 --last N --output OUTPUT.000
 ```
 
 ## Input Discovery Rules
@@ -263,7 +271,37 @@ python -m rdi_recover slice deployment.000 --last 15 --dry-run
 - Slicing never modifies the input. The output must be a new file: existing output files and input-as-output are refused.
 - Retained records are copied byte-for-byte without recalculating checksums or rewriting bytes, then the output is reparsed and compared byte-for-byte with the retained input records before publication.
 - If any source bytes are not complete validated ensembles, including malformed or truncated trailing data, they are reported and writing is refused so they cannot be silently dropped.
-- Depth-cell/bin removal is not implemented. Slice does not automatically detect false bottoms; it removes only the ensembles explicitly selected by the operator.
+- `slice` does not automatically detect false bottoms; it removes only the ensembles explicitly selected by the operator.
+
+### Slice Bins
+
+Remove the final `N` depth cells/bins from every ensemble in a single PD0 file:
+
+```bash
+rdi-recover slice-bins INPUT.000 --last N --dry-run
+rdi-recover slice-bins INPUT.000 --last N --output OUTPUT.000
+```
+
+The user supplies only `N`, the number of final bins to remove. The program derives the source depth-cell count, beam/component count, depth-cell size, PD0 block layout, and all relevant offsets and lengths from the input file.
+
+For a supported standard profile layout, `slice-bins`:
+
+- trims Velocity, Correlation Magnitude, Echo Intensity, and Percent Good
+- preserves non-bin-dependent blocks, including Bottom Track when present
+- updates the Fixed Leader depth-cell count
+- rebuilds the PD0 data-type offset table
+- updates the ensemble byte count and recalculates the PD0 checksum
+- reparses and validates the complete output before publishing it
+
+The operation fails closed. It refuses input with unparsed bytes, invalid checksums, varying bin configurations or layouts, unknown/unsupported blocks, or bin-dependent block sizes that do not match the inferred cell and beam/component counts.
+
+Example dry run for the validated Workhorse fixture:
+
+```bash
+rdi-recover slice-bins test_data/stnr0877/stnr0877_LADCPM.000 --last 15 --dry-run
+```
+
+That file contains 30 depth cells at 8.00 m spacing. Removing the final 15 cells produces 15 cells and reports a nominal removed outer range of 120 m. This nominal range is calculated from cell spacing; it is not an exact vertical depth measurement.
 
 ## Output Files
 
@@ -303,6 +341,10 @@ Run the test suite with:
 ```bash
 python -m unittest discover -s tests -p 'test_*.py'
 ```
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
 
 ## Platform Validation
 

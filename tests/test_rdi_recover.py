@@ -281,7 +281,7 @@ class RdiRecoverTests(unittest.TestCase):
             env=self.uninstalled_subprocess_env,
         )
         self.assertEqual(result.returncode, 0)
-        self.assertIn("rdi-recover 1.0.5", result.stdout)
+        self.assertIn("rdi-recover 1.1.0", result.stdout)
 
     def test_non_recursive_directory_discovery_does_not_enter_subdirectories(self) -> None:
         top = self.temp_dir / "top"
@@ -446,6 +446,55 @@ class RdiRecoverTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             rdi_recover.write_slice_output(plan, existing)
         self.assertEqual(existing.read_bytes(), b"do not replace")
+
+    def test_slice_bins_trims_standard_fixture_and_preserves_retained_payloads(self) -> None:
+        source = Path(__file__).resolve().parents[1] / "test_data" / "stnr0877" / "stnr0877_LADCPM.000"
+        output = self.temp_dir / "trimmed.000"
+        plan = rdi_recover.build_bin_trim_plan(source, 15)
+
+        self.assertEqual(len(plan.inventory.ensembles), 4520)
+        self.assertEqual((plan.source_cells, plan.resulting_cells, plan.beam_count), (30, 15, 4))
+        self.assertEqual(plan.cell_size_cm, 800)
+        self.assertEqual((plan.source_ensemble_bytes, plan.resulting_ensemble_bytes), (841, 541))
+        self.assertEqual(plan.removed_bytes_per_ensemble, 300)
+        self.assertEqual(plan.expected_output_bytes, 2445320)
+
+        validation = rdi_recover.write_bin_trim_output(plan, output)
+
+        self.assertFalse(validation.issues)
+        self.assertEqual(validation.valid_count, 4520)
+        self.assertEqual(output.stat().st_size, 2445320)
+        output_inventory = rdi_recover.inventory_file(output)
+        self.assertEqual(len(output_inventory.ensembles), 4520)
+        self.assertTrue(all(ensemble.total_bytes == 541 for ensemble in output_inventory.ensembles))
+        self.assertTrue(all(ensemble.stored_checksum == ensemble.calculated_checksum for ensemble in output_inventory.ensembles))
+
+    def test_slice_bins_dry_run_reports_detected_configuration_without_writing(self) -> None:
+        source = Path(__file__).resolve().parents[1] / "test_data" / "stnr0877" / "stnr0877_LADCPM.000"
+        output = self.temp_dir / "not-written.000"
+        result = subprocess.run(
+            [sys.executable, "-m", "rdi_recover", "slice-bins", str(source), "--last", "15", "--dry-run"],
+            capture_output=True,
+            text=True,
+            check=False,
+            env=self.uninstalled_subprocess_env,
+        )
+
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("Source depth cells: 30", result.stdout)
+        self.assertIn("Resulting depth cells: 15", result.stdout)
+        self.assertIn("Depth-cell size: 8.00 m", result.stdout)
+        self.assertIn("Nominal removed outer range: 120.00 m", result.stdout)
+        self.assertIn("Resulting ensemble bytes: 541", result.stdout)
+        self.assertIn("Expected output bytes: 2445320", result.stdout)
+        self.assertIn("DRY RUN: no output file written.", result.stdout)
+        self.assertFalse(output.exists())
+
+    def test_slice_bins_rejects_invalid_depth_cell_count(self) -> None:
+        source = Path(__file__).resolve().parents[1] / "test_data" / "stnr0877" / "stnr0877_LADCPM.000"
+        for value in (0, -1, 30, 31):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                rdi_recover.build_bin_trim_plan(source, value)
 
 
 if __name__ == "__main__":

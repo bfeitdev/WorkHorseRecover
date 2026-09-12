@@ -7,6 +7,8 @@ name = "rdi-recover"
 dynamic = ["version"]
 description = "Conservative recovery and validation tool for Teledyne RDI WorkHorse PD0 files"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.10"
 dependencies = []
 

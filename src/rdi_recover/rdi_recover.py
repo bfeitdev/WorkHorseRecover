@@ -21,6 +21,19 @@ from ._version import __version__
 SYNC = b"\x7f\x7f"
 FIXED_LEADER_ID = b"\x00\x00"
 VARIABLE_LEADER_ID = b"\x80\x00"
+VELOCITY_ID = b"\x00\x01"
+CORRELATION_MAGNITUDE_ID = b"\x00\x02"
+ECHO_INTENSITY_ID = b"\x00\x03"
+PERCENT_GOOD_ID = b"\x00\x04"
+BOTTOM_TRACK_ID = b"\x00\x06"
+
+BIN_DEPENDENT_BLOCKS = {
+    VELOCITY_ID: ("Velocity", 2),
+    CORRELATION_MAGNITUDE_ID: ("Correlation Magnitude", 1),
+    ECHO_INTENSITY_ID: ("Echo Intensity", 1),
+    PERCENT_GOOD_ID: ("Percent Good", 1),
+}
+SUPPORTED_BIN_TRIM_BLOCKS = {FIXED_LEADER_ID, VARIABLE_LEADER_ID, *BIN_DEPENDENT_BLOCKS, BOTTOM_TRACK_ID}
 
 BOUNDARY_STATUS_ORDER = [
     "CONFLICT",
@@ -104,6 +117,37 @@ class SliceValidation:
     valid_count: int
     issues: list[str]
     retained_bytes_match: bool
+
+
+@dataclass(frozen=True)
+class BinTrimBlock:
+    block_id: bytes
+    name: str
+    offset: int
+    length: int
+    bytes_per_bin: int | None
+
+
+@dataclass(frozen=True)
+class BinTrimPlan:
+    input_path: Path
+    inventory: FileInventory
+    remove_last: int
+    source_cells: int
+    resulting_cells: int
+    beam_count: int
+    cell_size_cm: int
+    blocks: tuple[BinTrimBlock, ...]
+    source_ensemble_bytes: int
+    resulting_ensemble_bytes: int
+    removed_bytes_per_ensemble: int
+    expected_output_bytes: int
+
+
+@dataclass(frozen=True)
+class BinTrimValidation:
+    valid_count: int
+    issues: list[str]
 
 
 @dataclass(frozen=True)
@@ -1845,6 +1889,213 @@ def write_slice_output(plan: SlicePlan, output_path: Path) -> SliceValidation:
             temporary_path.unlink()
 
 
+def bin_trim_blocks(data: bytes, ensemble: Ensemble) -> tuple[BinTrimBlock, ...]:
+    blocks: list[BinTrimBlock] = []
+    for index, offset in enumerate(ensemble.offsets):
+        end = ensemble.offsets[index + 1] if index + 1 < len(ensemble.offsets) else ensemble.byte_count
+        block_id = data[ensemble.start + offset : ensemble.start + offset + 2]
+        name, element_width = BIN_DEPENDENT_BLOCKS.get(block_id, (block_id.hex(), None))
+        blocks.append(BinTrimBlock(block_id, name, offset, end - offset, element_width))
+    return tuple(blocks)
+
+
+def build_bin_trim_plan(input_path: Path, remove_last: int) -> BinTrimPlan:
+    """Prove a PD0 file can be rewritten by removing final depth cells only."""
+    if remove_last <= 0:
+        raise ValueError("--last must be greater than zero")
+    inventory = inventory_file(input_path)
+    if not inventory.ensembles:
+        raise ValueError("input contains no complete, checksum-valid PD0 ensembles")
+    if any(region.classification != "VALID_ENSEMBLE" for region in inventory.regions):
+        raise ValueError("refusing bin trim: input contains unparsed, malformed, or checksum-invalid bytes")
+
+    data = input_path.read_bytes()
+    first = inventory.ensembles[0]
+    first_blocks = bin_trim_blocks(data, first)
+    if any(block.block_id not in SUPPORTED_BIN_TRIM_BLOCKS for block in first_blocks):
+        unknown = next(block.block_id.hex() for block in first_blocks if block.block_id not in SUPPORTED_BIN_TRIM_BLOCKS)
+        raise ValueError(f"refusing bin trim: unsupported or unknown data block 0x{unknown}")
+    block_ids = tuple(block.block_id for block in first_blocks)
+    required = tuple(BIN_DEPENDENT_BLOCKS)
+    if any(block_ids.count(block_id) != 1 for block_id in required):
+        raise ValueError("refusing bin trim: each standard bin-dependent block must occur exactly once")
+    if block_ids.count(FIXED_LEADER_ID) != 1 or block_ids.count(VARIABLE_LEADER_ID) != 1 or block_ids.count(BOTTOM_TRACK_ID) > 1:
+        raise ValueError("refusing bin trim: repeated leader or Bottom Track block creates an unsupported layout")
+
+    fixed = data[first.start + first.offsets[0] : first.start + first.offsets[1]]
+    if len(fixed) < 16:
+        raise ValueError("refusing bin trim: fixed leader is too short for depth-cell configuration")
+    beam_count = fixed[8]
+    source_cells = fixed[9]
+    cell_size_cm = struct.unpack_from("<H", fixed, 12)[0]
+    if beam_count <= 0 or source_cells <= 0 or cell_size_cm <= 0:
+        raise ValueError("refusing bin trim: invalid fixed-leader beam, depth-cell, or cell-size configuration")
+    if remove_last >= source_cells:
+        raise ValueError(f"--last must be between 1 and {source_cells - 1} for this file")
+
+    expected_blocks: list[BinTrimBlock] = []
+    for block in first_blocks:
+        if block.block_id in BIN_DEPENDENT_BLOCKS:
+            name, element_width = BIN_DEPENDENT_BLOCKS[block.block_id]
+            expected_length = 2 + source_cells * beam_count * element_width
+            if block.length != expected_length:
+                raise ValueError(
+                    f"refusing bin trim: {name} block length {block.length} does not match "
+                    f"{source_cells} cells x {beam_count} beams x {element_width}-byte elements"
+                )
+            expected_blocks.append(BinTrimBlock(block.block_id, name, block.offset, block.length, beam_count * element_width))
+        else:
+            expected_blocks.append(block)
+
+    expected_layout = tuple((block.block_id, block.offset, block.length) for block in expected_blocks)
+    for ensemble in inventory.ensembles[1:]:
+        blocks = bin_trim_blocks(data, ensemble)
+        layout = tuple((block.block_id, block.offset, block.length) for block in blocks)
+        if layout != expected_layout:
+            raise ValueError("refusing bin trim: ensemble data-block ordering, offsets, or lengths vary")
+        fixed = data[ensemble.start + ensemble.offsets[0] : ensemble.start + ensemble.offsets[1]]
+        if len(fixed) < 16 or fixed[8] != beam_count or fixed[9] != source_cells or struct.unpack_from("<H", fixed, 12)[0] != cell_size_cm:
+            raise ValueError("refusing bin trim: fixed-leader beam or depth-cell configuration varies")
+
+    removed_bytes_per_ensemble = sum(remove_last * (block.bytes_per_bin or 0) for block in expected_blocks)
+    resulting_ensemble_bytes = first.total_bytes - removed_bytes_per_ensemble
+    if resulting_ensemble_bytes <= 2:
+        raise ValueError("refusing bin trim: resulting ensemble would be invalid")
+    return BinTrimPlan(
+        input_path=input_path,
+        inventory=inventory,
+        remove_last=remove_last,
+        source_cells=source_cells,
+        resulting_cells=source_cells - remove_last,
+        beam_count=beam_count,
+        cell_size_cm=cell_size_cm,
+        blocks=tuple(expected_blocks),
+        source_ensemble_bytes=first.total_bytes,
+        resulting_ensemble_bytes=resulting_ensemble_bytes,
+        removed_bytes_per_ensemble=removed_bytes_per_ensemble,
+        expected_output_bytes=resulting_ensemble_bytes * len(inventory.ensembles),
+    )
+
+
+def trim_ensemble_bins(source_data: bytes, ensemble: Ensemble, plan: BinTrimPlan) -> bytes:
+    header_length = 6 + 2 * ensemble.number_of_data_types
+    output_blocks: list[bytes] = []
+    for block in plan.blocks:
+        source_block = source_data[ensemble.start + block.offset : ensemble.start + block.offset + block.length]
+        if block.block_id == FIXED_LEADER_ID:
+            rewritten = bytearray(source_block)
+            rewritten[9] = plan.resulting_cells
+            output_blocks.append(bytes(rewritten))
+        elif block.bytes_per_bin is not None:
+            retained_length = 2 + plan.resulting_cells * block.bytes_per_bin
+            output_blocks.append(source_block[:retained_length])
+        else:
+            output_blocks.append(source_block)
+
+    byte_count = header_length + sum(len(block) for block in output_blocks)
+    if byte_count > 0xFFFF:
+        raise ValueError("refusing bin trim: rewritten ensemble byte count exceeds PD0 header capacity")
+    header = bytearray(source_data[ensemble.start : ensemble.start + header_length])
+    struct.pack_into("<H", header, 2, byte_count)
+    offset = header_length
+    offsets = []
+    for block in output_blocks:
+        offsets.append(offset)
+        offset += len(block)
+    struct.pack_into("<" + "H" * len(offsets), header, 6, *offsets)
+    payload = bytes(header) + b"".join(output_blocks)
+    return payload + struct.pack("<H", checksum_rdi(payload))
+
+
+def validate_bin_trim_output(output_path: Path, source_data: bytes, plan: BinTrimPlan) -> BinTrimValidation:
+    output_inventory = inventory_file(output_path)
+    output_data = output_path.read_bytes()
+    issues: list[str] = []
+    if len(output_data) != plan.expected_output_bytes:
+        issues.append(f"output size {len(output_data)} does not match expected {plan.expected_output_bytes}")
+    if len(output_inventory.ensembles) != len(plan.inventory.ensembles):
+        issues.append(f"output contains {len(output_inventory.ensembles)} complete ensembles; expected {len(plan.inventory.ensembles)}")
+    if any(region.classification != "VALID_ENSEMBLE" for region in output_inventory.regions):
+        issues.append("output contains unparsed, malformed, or checksum-invalid bytes")
+    if len(output_inventory.ensembles) == len(plan.inventory.ensembles):
+        for source, output in zip(plan.inventory.ensembles, output_inventory.ensembles):
+            output_blocks = bin_trim_blocks(output_data, output)
+            if tuple(block.block_id for block in output_blocks) != tuple(block.block_id for block in plan.blocks):
+                issues.append(f"ensemble {source.ensemble_number}: output data-block ordering changed")
+                break
+            output_fixed = output_data[output.start + output.offsets[0] : output.start + output.offsets[1]]
+            if len(output_fixed) < 16 or output_fixed[9] != plan.resulting_cells:
+                issues.append(f"ensemble {source.ensemble_number}: output depth-cell count is incorrect")
+                break
+            for source_block, output_block in zip(plan.blocks, output_blocks):
+                original = source_data[source.start + source_block.offset : source.start + source_block.offset + source_block.length]
+                rewritten = output_data[output.start + output_block.offset : output.start + output_block.offset + output_block.length]
+                if source_block.bytes_per_bin is not None:
+                    retained = 2 + plan.resulting_cells * source_block.bytes_per_bin
+                    if rewritten != original[:retained]:
+                        issues.append(f"ensemble {source.ensemble_number}: retained {source_block.name} bin payload changed")
+                        break
+                elif source_block.block_id == FIXED_LEADER_ID:
+                    expected = bytearray(original)
+                    expected[9] = plan.resulting_cells
+                    if rewritten != expected:
+                        issues.append(f"ensemble {source.ensemble_number}: fixed leader changed outside depth-cell count")
+                        break
+                elif rewritten != original:
+                    issues.append(f"ensemble {source.ensemble_number}: non-bin block {source_block.name} changed")
+                    break
+            if issues:
+                break
+    return BinTrimValidation(len(output_inventory.ensembles), issues)
+
+
+def render_bin_trim_report(plan: BinTrimPlan) -> str:
+    removed_range_m = plan.remove_last * plan.cell_size_cm / 100
+    return "\n".join(
+        [
+            "# PD0 Depth-Cell Trim",
+            "",
+            f"- Input file: `{plan.input_path}`",
+            f"- Complete ensembles: {len(plan.inventory.ensembles)}",
+            f"- Source depth cells: {plan.source_cells}",
+            f"- Remove final depth cells: {plan.remove_last}",
+            f"- Resulting depth cells: {plan.resulting_cells}",
+            f"- Beams/components per cell: {plan.beam_count}",
+            f"- Depth-cell size: {plan.cell_size_cm / 100:.2f} m",
+            f"- Nominal removed outer range: {removed_range_m:.2f} m",
+            f"- Source ensemble bytes: {plan.source_ensemble_bytes}",
+            f"- Removed bytes per ensemble: {plan.removed_bytes_per_ensemble}",
+            f"- Resulting ensemble bytes: {plan.resulting_ensemble_bytes}",
+            f"- Expected output bytes: {plan.expected_output_bytes}",
+            "",
+        ]
+    )
+
+
+def write_bin_trim_output(plan: BinTrimPlan, output_path: Path) -> BinTrimValidation:
+    if output_path.resolve() == plan.input_path.resolve():
+        raise ValueError("output path must not overwrite the input file")
+    if output_path.exists():
+        raise ValueError(f"refusing to overwrite existing output file: {output_path}")
+    source_data = plan.input_path.read_bytes()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = output_path.with_name(f".{output_path.name}.bin-trim-tmp")
+    if temporary_path.exists():
+        raise ValueError(f"refusing to replace temporary bin-trim file: {temporary_path}")
+    try:
+        with temporary_path.open("wb") as handle:
+            for ensemble in plan.inventory.ensembles:
+                handle.write(trim_ensemble_bins(source_data, ensemble, plan))
+        validation = validate_bin_trim_output(temporary_path, source_data, plan)
+        if validation.issues:
+            raise ValueError("output validation failed: " + "; ".join(validation.issues))
+        temporary_path.replace(output_path)
+        return validation
+    finally:
+        if temporary_path.exists():
+            temporary_path.unlink()
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Conservative Teledyne RDI WorkHorse PD0 inspection, recovery, and ensemble slicing tool")
     parser.add_argument("--version", action="version", version=f"rdi-recover {__version__}")
@@ -1867,6 +2118,12 @@ def build_parser() -> argparse.ArgumentParser:
     selection.add_argument("--range", dest="range_spec", help="Remove inclusive 1-based physical ensemble indexes A:B")
     slice_parser.add_argument("--output", help="New output .000 file (required unless --dry-run is used)")
     slice_parser.add_argument("--dry-run", action="store_true", help="Analyze and report the slice without writing a file")
+
+    bin_trim_parser = subparsers.add_parser("slice-bins", help="Remove final depth cells from proven standard PD0 profile blocks")
+    bin_trim_parser.add_argument("input", help="Input .000 file")
+    bin_trim_parser.add_argument("--last", required=True, type=int, help="Remove the final N depth cells from every ensemble")
+    bin_trim_parser.add_argument("--output", help="New output .000 file (required unless --dry-run is used)")
+    bin_trim_parser.add_argument("--dry-run", action="store_true", help="Analyze and report the bin trim without writing a file")
     return parser
 
 
@@ -1892,6 +2149,21 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
         except (OSError, ValueError) as error:
             sys.stderr.write(f"SLICE FAILED: {error}\n")
+            return 1
+    if args.command == "slice-bins":
+        try:
+            plan = build_bin_trim_plan(Path(args.input), args.last)
+            sys.stdout.write(render_bin_trim_report(plan))
+            if args.dry_run:
+                sys.stdout.write("DRY RUN: no output file written.\n")
+                return 0
+            if not args.output:
+                raise ValueError("--output is required unless --dry-run is used")
+            validation = write_bin_trim_output(plan, Path(args.output))
+            sys.stdout.write(f"BIN TRIM VALIDATION PASS: {validation.valid_count} ensembles reparsed and retained payloads match exactly.\n")
+            return 0
+        except (OSError, ValueError) as error:
+            sys.stderr.write(f"BIN TRIM FAILED: {error}\n")
             return 1
     groups = discover_candidate_groups(args.inputs, recursive=args.recursive, output_dir=output_dir)
     selected_group, status = select_single_group_or_status(groups)
