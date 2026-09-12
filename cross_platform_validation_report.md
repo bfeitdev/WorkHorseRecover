@@ -6,8 +6,8 @@
 - Packaging/CI fixes made: yes
 - Local synthetic baseline: `22 tests`, `OK`
 - Existing `v1.0.0` tag modified: no
-- Already locally validated: Linux ARM64, Linux AMD64 under Docker emulation, Python 3.13
-- Pending actual GitHub Actions execution: Linux x64 hosted runner, Linux ARM64 hosted runner, Windows x64, macOS ARM64, macOS Intel/x64, Python 3.10
+- Source-package GitHub Actions validation completed: yes
+- Overall source-package status: `CROSS_PLATFORM_VALIDATED`
 
 ## 1. Local Linux ARM64 Docker Result
 
@@ -80,53 +80,61 @@ Each job:
 
 ## 6. Actual GitHub Actions Results If Available
 
-- Not available in this session
-- Workflows were created locally but not executed on GitHub from here
+- Linux x64: PASS
+- Linux ARM64: PASS
+- Windows x64: PASS
+- macOS ARM64: PASS
+- macOS Intel/x64: PASS
+- Python 3.10: PASS where configured
+- Python 3.13: PASS
 
 ## 7. Windows x64 Result
 
 - Local result: not available
-- CI workflow coverage added: yes, `windows-latest` with Python `3.10` and `3.13`
-- Status in this report: pending GitHub Actions execution
+- GitHub Actions hosted runner result: PASS
 
 ## 8. macOS ARM64 Result
 
-- Local result: not validated on a GitHub-hosted runner in this session
-- Dedicated GitHub Actions coverage added: `macos-15` with Python `3.10` and `3.13`
-- Status in this report: pending GitHub Actions execution
+- GitHub Actions hosted runner result: PASS
 
 ## 9. macOS Intel Result
 
 - Local result: not available
-- CI workflow coverage added: yes, `macos-15-intel` with Python `3.13`
-- Status in this report: pending GitHub Actions execution
+- GitHub Actions hosted runner result: PASS
 
 ## 10. Linux x64 Result
 
 - Local Docker source install: PASS
 - Local Docker wheel install: PASS
-- CI workflow coverage added: yes, `ubuntu-latest` with Python `3.10` and `3.13`
-- Status in this report: pending GitHub Actions execution
+- GitHub Actions hosted runner result: PASS
 
 ## 11. Linux ARM64 Result
 
 - Local Docker source install: PASS
 - Local Docker wheel install: PASS
-- CI workflow coverage added: yes, `ubuntu-24.04-arm` with Python `3.13`
-- Status in this report: pending GitHub Actions execution
+- GitHub Actions hosted runner result: PASS
 
 ## 12. Python 3.10 Result
 
 - Local result: not re-run in this phase
-- CI workflow coverage added for `3.10` on `ubuntu-latest`, `windows-latest`, and `macos-15`
-- Status in this report: pending GitHub Actions execution
+- GitHub Actions result: PASS where configured
 
 ## 13. Python 3.13 Result
 
 - Local Linux ARM64 Docker: PASS
 - Local Linux AMD64 Docker: PASS
 - Local macOS baseline from earlier package validation: PASS
-- CI workflow coverage added across all configured runners
+- GitHub Actions result: PASS
+
+## Standalone Binary Validation
+
+| Platform | Runner | Architecture | PyInstaller build | --version | --help | inspect | recover | Result |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Windows x64 | `windows-latest` | `x64` | pending | pending | pending | pending | pending | pending |
+| Linux x64 | `ubuntu-latest` | `x64` | pending | pending | pending | pending | pending | pending |
+| Linux ARM64 | `ubuntu-24.04-arm` | `arm64` | pending | pending | pending | pending | pending | pending |
+| macOS ARM64 | `macos-15` | `arm64` | PASS locally, pending CI | PASS locally, pending CI | PASS locally, pending CI | PASS locally, pending CI | PASS locally, pending CI | pending GitHub Actions |
+| macOS Intel/x64 | `macos-15-intel` | `x64` | pending | pending | pending | pending | pending | pending |
 
 ## 14. Defects Found
 
@@ -155,6 +163,6 @@ Each job:
 - The existing `v1.0.0` tag was not modified.
 - The new workflow files exist on the current branch only, not retroactively inside the historical `v1.0.0` tag.
 - Real dataset regression remains a local/manual release verification step and is not moved into CI.
-- Full cross-platform validation should not be claimed until the GitHub-hosted workflows complete successfully.
+- Standalone binary validation remains pending until the new GitHub Actions binary workflow completes successfully on each native runner.
 
-PENDING_GITHUB_ACTIONS_VALIDATION
+CROSS_PLATFORM_VALIDATED
