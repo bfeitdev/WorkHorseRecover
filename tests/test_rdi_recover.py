@@ -69,6 +69,69 @@ def build_pd0_like_ensemble(
     return bytes(payload) + struct.pack("<H", checksum)
 
 
+def build_standard_profile_ensemble(
+    ensemble_number: int,
+    timestamp: datetime,
+    *,
+    cells: int = 4,
+    beams: int = 4,
+    cell_size_cm: int = 800,
+    payload_seed: int = 1,
+) -> bytes:
+    """Build a checksum-valid PD0 profile with every block supported by slice-bins."""
+    fixed = bytearray(40)
+    fixed[0:2] = rdi_recover.FIXED_LEADER_ID
+    fixed[8] = beams
+    fixed[9] = cells
+    struct.pack_into("<H", fixed, 12, cell_size_cm)
+
+    variable = bytearray(21)
+    variable[0:2] = rdi_recover.VARIABLE_LEADER_ID
+    struct.pack_into("<H", variable, 2, ensemble_number & 0xFFFF)
+    variable[4:11] = bytes(
+        [
+            timestamp.year - 2000,
+            timestamp.month,
+            timestamp.day,
+            timestamp.hour,
+            timestamp.minute,
+            timestamp.second,
+            round(timestamp.microsecond / 10000),
+        ]
+    )
+    variable[11] = (ensemble_number >> 16) & 0xFF
+
+    def profile_block(block_id: bytes, element_width: int, block_seed: int) -> bytes:
+        length = cells * beams * element_width
+        values = bytes((payload_seed + block_seed + index) % 256 for index in range(length))
+        return block_id + values
+
+    blocks = [
+        bytes(fixed),
+        bytes(variable),
+        profile_block(rdi_recover.VELOCITY_ID, 2, 10),
+        profile_block(rdi_recover.CORRELATION_MAGNITUDE_ID, 1, 30),
+        profile_block(rdi_recover.ECHO_INTENSITY_ID, 1, 50),
+        profile_block(rdi_recover.PERCENT_GOOD_ID, 1, 70),
+        rdi_recover.BOTTOM_TRACK_ID + bytes((payload_seed + 90 + index) % 256 for index in range(68)),
+    ]
+    header_len = 6 + 2 * len(blocks)
+    offsets: list[int] = []
+    offset = header_len
+    for block in blocks:
+        offsets.append(offset)
+        offset += len(block)
+    payload = bytearray(offset)
+    payload[0:2] = rdi_recover.SYNC
+    struct.pack_into("<H", payload, 2, len(payload))
+    payload[4] = 0
+    payload[5] = len(blocks)
+    struct.pack_into("<" + "H" * len(offsets), payload, 6, *offsets)
+    for block, block_offset in zip(blocks, offsets):
+        payload[block_offset : block_offset + len(block)] = block
+    return bytes(payload) + struct.pack("<H", rdi_recover.checksum_rdi(payload))
+
+
 def write_file(path: Path, chunks: list[bytes]) -> None:
     path.write_bytes(b"".join(chunks))
 
@@ -448,32 +511,35 @@ class RdiRecoverTests(unittest.TestCase):
         self.assertEqual(existing.read_bytes(), b"do not replace")
 
     def test_slice_bins_trims_standard_fixture_and_preserves_retained_payloads(self) -> None:
-        source = Path(__file__).resolve().parents[1] / "test_data" / "stnr0877" / "stnr0877_LADCPM.000"
+        source = self.temp_dir / "profile.000"
+        write_file(source, [build_standard_profile_ensemble(index, datetime(2024, 1, 1, 0, 0, index), payload_seed=index) for index in range(1, 4)])
         output = self.temp_dir / "trimmed.000"
-        plan = rdi_recover.build_bin_trim_plan(source, 15)
+        plan = rdi_recover.build_bin_trim_plan(source, 2)
 
-        self.assertEqual(len(plan.inventory.ensembles), 4520)
-        self.assertEqual((plan.source_cells, plan.resulting_cells, plan.beam_count), (30, 15, 4))
+        self.assertEqual(len(plan.inventory.ensembles), 3)
+        self.assertEqual((plan.source_cells, plan.resulting_cells, plan.beam_count), (4, 2, 4))
         self.assertEqual(plan.cell_size_cm, 800)
-        self.assertEqual((plan.source_ensemble_bytes, plan.resulting_ensemble_bytes), (841, 541))
-        self.assertEqual(plan.removed_bytes_per_ensemble, 300)
-        self.assertEqual(plan.expected_output_bytes, 2445320)
+        self.assertEqual((plan.source_ensemble_bytes, plan.resulting_ensemble_bytes), (241, 201))
+        self.assertEqual(plan.removed_bytes_per_ensemble, 40)
+        self.assertEqual(plan.expected_output_bytes, 603)
+        self.assertEqual(plan.inventory.ensembles[0].ids, ("0000", "8000", "0001", "0002", "0003", "0004", "0006"))
 
         validation = rdi_recover.write_bin_trim_output(plan, output)
 
         self.assertFalse(validation.issues)
-        self.assertEqual(validation.valid_count, 4520)
-        self.assertEqual(output.stat().st_size, 2445320)
+        self.assertEqual(validation.valid_count, 3)
+        self.assertEqual(output.stat().st_size, 603)
         output_inventory = rdi_recover.inventory_file(output)
-        self.assertEqual(len(output_inventory.ensembles), 4520)
-        self.assertTrue(all(ensemble.total_bytes == 541 for ensemble in output_inventory.ensembles))
+        self.assertEqual(len(output_inventory.ensembles), 3)
+        self.assertTrue(all(ensemble.total_bytes == 201 for ensemble in output_inventory.ensembles))
         self.assertTrue(all(ensemble.stored_checksum == ensemble.calculated_checksum for ensemble in output_inventory.ensembles))
 
     def test_slice_bins_dry_run_reports_detected_configuration_without_writing(self) -> None:
-        source = Path(__file__).resolve().parents[1] / "test_data" / "stnr0877" / "stnr0877_LADCPM.000"
+        source = self.temp_dir / "profile.000"
+        write_file(source, [build_standard_profile_ensemble(1, datetime(2024, 1, 1))])
         output = self.temp_dir / "not-written.000"
         result = subprocess.run(
-            [sys.executable, "-m", "rdi_recover", "slice-bins", str(source), "--last", "15", "--dry-run"],
+            [sys.executable, "-m", "rdi_recover", "slice-bins", str(source), "--last", "2", "--dry-run"],
             capture_output=True,
             text=True,
             check=False,
@@ -481,18 +547,19 @@ class RdiRecoverTests(unittest.TestCase):
         )
 
         self.assertEqual(result.returncode, 0)
-        self.assertIn("Source depth cells: 30", result.stdout)
-        self.assertIn("Resulting depth cells: 15", result.stdout)
+        self.assertIn("Source depth cells: 4", result.stdout)
+        self.assertIn("Resulting depth cells: 2", result.stdout)
         self.assertIn("Depth-cell size: 8.00 m", result.stdout)
-        self.assertIn("Nominal removed outer range: 120.00 m", result.stdout)
-        self.assertIn("Resulting ensemble bytes: 541", result.stdout)
-        self.assertIn("Expected output bytes: 2445320", result.stdout)
+        self.assertIn("Nominal removed outer range: 16.00 m", result.stdout)
+        self.assertIn("Resulting ensemble bytes: 201", result.stdout)
+        self.assertIn("Expected output bytes: 201", result.stdout)
         self.assertIn("DRY RUN: no output file written.", result.stdout)
         self.assertFalse(output.exists())
 
     def test_slice_bins_rejects_invalid_depth_cell_count(self) -> None:
-        source = Path(__file__).resolve().parents[1] / "test_data" / "stnr0877" / "stnr0877_LADCPM.000"
-        for value in (0, -1, 30, 31):
+        source = self.temp_dir / "profile.000"
+        write_file(source, [build_standard_profile_ensemble(1, datetime(2024, 1, 1))])
+        for value in (0, -1, 4, 5):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 rdi_recover.build_bin_trim_plan(source, value)
 
